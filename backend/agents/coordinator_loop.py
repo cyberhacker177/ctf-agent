@@ -15,7 +15,7 @@ from backend.deps import CoordinatorDeps
 from backend.htb import HTBClient
 from backend.models import DEFAULT_MODELS
 from backend.platform import PlatformClient
-from backend.poller import CTFdPoller
+from backend.poller import PlatformPoller
 from backend.prompts import ChallengeMeta
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ def build_deps(
     Path(challenges_root).mkdir(parents=True, exist_ok=True)
 
     deps = CoordinatorDeps(
-        ctfd=client,
+        platform_client=client,
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=specs,
@@ -78,7 +78,7 @@ def build_deps(
 
 async def run_event_loop(
     deps: CoordinatorDeps,
-    ctfd: PlatformClient,
+    platform_client: PlatformClient,
     cost_tracker: CostTracker,
     turn_fn: TurnFn,
     status_interval: int = 60,
@@ -87,12 +87,12 @@ async def run_event_loop(
 
     Args:
         deps: Coordinator dependencies (shared state).
-        ctfd: CTFd client (for poller).
+        platform_client: Configured challenge-platform client (for poller).
         cost_tracker: Cost tracker.
         turn_fn: Async function that sends a message to the coordinator LLM.
         status_interval: Seconds between status updates.
     """
-    poller = CTFdPoller(ctfd=ctfd, interval_s=5.0)
+    poller = PlatformPoller(platform_client=platform_client, interval_s=5.0)
     await poller.start()
 
     # Start operator message HTTP endpoint
@@ -207,7 +207,7 @@ async def run_event_loop(
             await asyncio.gather(*deps.swarm_tasks.values(), return_exceptions=True)
         cost_tracker.log_summary()
         try:
-            await ctfd.close()
+            await platform_client.close()
         except Exception:
             pass
 

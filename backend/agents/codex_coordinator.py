@@ -331,7 +331,7 @@ async def run_codex_coordinator(
     msg_port: int = 0,
 ) -> dict[str, Any]:
     """Run the Codex coordinator with the shared event loop."""
-    ctfd, cost_tracker, deps = build_deps(
+    platform_client, cost_tracker, deps = build_deps(
         settings, model_specs, challenges_root, no_submit,
     )
     deps.msg_port = msg_port
@@ -346,6 +346,6 @@ async def run_codex_coordinator(
         logger.info("Codex coordinator turn done")
 
     try:
-        return await run_event_loop(deps, ctfd, cost_tracker, turn_fn)
+        return await run_event_loop(deps, platform_client, cost_tracker, turn_fn)
     finally:
         await coordinator.stop()

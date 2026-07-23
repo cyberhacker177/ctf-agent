@@ -32,8 +32,8 @@ def unavailable_for_ai(settings: object) -> set[str]:
 
 
 async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
-    challenges = await deps.ctfd.fetch_all_challenges()
-    solved = await deps.ctfd.fetch_solved_names()
+    challenges = await deps.platform_client.fetch_all_challenges()
+    solved = await deps.platform_client.fetch_solved_names()
     unavailable = unavailable_for_ai(deps.settings)
     result = [
         {
@@ -54,7 +54,7 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
 
 
 async def do_get_solve_status(deps: CoordinatorDeps) -> str:
-    solved = await deps.ctfd.fetch_solved_names()
+    solved = await deps.platform_client.fetch_solved_names()
     swarm_status = {name: swarm.get_status() for name, swarm in deps.swarms.items()}
     return json.dumps({"solved": sorted(solved), "active_swarms": swarm_status}, indent=2)
 
@@ -72,15 +72,17 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
 
     # Never allocate an AI swarm after the team has already solved it.
     try:
-        if challenge_name in await deps.ctfd.fetch_solved_names():
+        if challenge_name in await deps.platform_client.fetch_solved_names():
             if swarm := deps.swarms.get(challenge_name):
                 swarm.kill()
+            logger.info("[Coordinator] Challenge skipped (already solved): %s", challenge_name)
             return f"Skipped {challenge_name}: it was already solved by your team."
     except Exception as exc:
         logger.debug("Could not verify solve status before spawning %s: %s", challenge_name, exc)
 
     unavailable = unavailable_for_ai(deps.settings)
     if challenge_name in unavailable:
+        logger.info("[Coordinator] Challenge skipped (unavailable for AI): %s", challenge_name)
         return f"Skipped {challenge_name}: it is configured as unavailable for AI."
 
     active_count = len(deps.swarms)
@@ -92,23 +94,25 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
 
     # Auto-pull challenge if needed
     if challenge_name not in deps.challenge_dirs:
-        challenges = await deps.ctfd.fetch_all_challenges()
+        challenges = await deps.platform_client.fetch_all_challenges()
         ch_data = next((c for c in challenges if c.get("name") == challenge_name), None)
         if not ch_data:
-            return f"Challenge '{challenge_name}' not found on CTFd"
+            return f"Challenge '{challenge_name}' not found on the configured platform"
         output_dir = str(Path(deps.challenges_root))
-        ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
+        ch_dir = await deps.platform_client.pull_challenge(ch_data, output_dir)
         deps.challenge_dirs[challenge_name] = ch_dir
         deps.challenge_metas[challenge_name] = ChallengeMeta.from_yaml(Path(ch_dir) / "metadata.yml")
 
     # HTB container challenges need a remote instance before solvers can connect.
     # Other platforms can explicitly report that lifecycle operations are unsupported.
     ch_data = next(
-        (ch for ch in await deps.ctfd.fetch_all_challenges() if ch.get("name") == challenge_name), None
+        (ch for ch in await deps.platform_client.fetch_all_challenges() if ch.get("name") == challenge_name), None
     )
     if ch_data and ch_data.get("_instance_supported"):
         try:
-            instance: InstanceStatus = await deps.ctfd.start_instance(challenge_name)
+            platform_name = getattr(deps.platform_client, "platform_name", "platform").upper()
+            logger.info("[%s] Starting instance for %s", platform_name, challenge_name)
+            instance: InstanceStatus = await deps.platform_client.start_instance(challenge_name)
             if instance.connection_info:
                 meta = deps.challenge_metas[challenge_name]
                 meta.connection_info = instance.connection_info
@@ -119,22 +123,36 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
                     yaml.dump(metadata, allow_unicode=True, default_flow_style=False, sort_keys=False),
                     encoding="utf-8",
                 )
-            logger.info(
-                "HTB instance started for %s: %s",
-                challenge_name,
-                instance.connection_info or instance.status,
-            )
+                logger.info(
+                    "[%s] Instance ready for %s: %s",
+                    platform_name,
+                    challenge_name,
+                    instance.connection_info,
+                )
+            else:
+                logger.warning(
+                    "[%s] Instance unavailable for %s (%s): %s",
+                    platform_name,
+                    challenge_name,
+                    instance.status,
+                    instance.message or "no connection target was provided",
+                )
+                return (
+                    f"Skipped {challenge_name}: required instance is {instance.status} "
+                    f"and no connection target is available."
+                )
         except NotImplementedError:
-            pass
+            logger.info("[Platform] Instance lifecycle unsupported for %s", challenge_name)
         except Exception as exc:
-            logger.warning("Could not start instance for %s: %s", challenge_name, exc)
+            logger.warning("[Platform] Instance startup failed for %s: %s", challenge_name, exc)
+            return f"Skipped {challenge_name}: required instance could not be started ({exc})."
 
     from backend.agents.swarm import ChallengeSwarm
 
     swarm = ChallengeSwarm(
         challenge_dir=deps.challenge_dirs[challenge_name],
         meta=deps.challenge_metas[challenge_name],
-        ctfd=deps.ctfd,
+        platform_client=deps.platform_client,
         cost_tracker=deps.cost_tracker,
         settings=deps.settings,
         model_specs=deps.model_specs,
@@ -168,7 +186,7 @@ async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) 
     if deps.no_submit:
         return f'DRY RUN — would submit "{flag.strip()}" for {challenge_name}'
     try:
-        result = await deps.ctfd.submit_flag(challenge_name, flag)
+        result = await deps.platform_client.submit_flag(challenge_name, flag)
         return result.display
     except Exception as e:
         return f"submit_flag error: {e}"

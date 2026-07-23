@@ -88,3 +88,29 @@ async def test_http_start_instance_uses_htb_id_payload():
     assert status.status == "running"
     assert status.connection_info == "nc 10.10.10.10 1337"
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_http_start_instance_reports_timeout_without_connection_target():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ctfs/1434":
+            return httpx.Response(
+                200,
+                json={"challenges": [{"id": 40784, "name": "Instance", "hasDocker": 1, "docker_online": 0}]},
+            )
+        if request.url.path == "/challenges/containers/start":
+            return httpx.Response(200, json={"status": "starting"})
+        return httpx.Response(404)
+
+    client = HTBClient(
+        event_id=1434,
+        token="token",
+        mode="http",
+        api_url="https://mock",
+        instance_ready_timeout_s=0,
+    )
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock")
+    status = await client.start_instance("Instance")
+    assert status.status == "timeout"
+    assert status.connection_info == ""
+    await client.close()

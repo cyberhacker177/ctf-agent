@@ -171,7 +171,7 @@ async def _run_single(
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_path),
         meta=meta,
-        ctfd=client,
+        platform_client=client,
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=model_specs,

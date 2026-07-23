@@ -316,6 +316,8 @@ class HTBClient:
     stop_path: str = "/challenges/containers/stop"
     login_path: str = "/auth/login"
     login_url: str = DEFAULT_LOGIN_URL
+    instance_ready_timeout_s: float = 15.0
+    instance_poll_interval_s: float = 1.0
 
     platform_name: str = field(default="htb", init=False)
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
@@ -372,16 +374,17 @@ class HTBClient:
         if self.mode == "http" or self._active_mode == "http":
             return await http_call()
         if not self.token:
+            logger.info("[HTB] MCP unavailable without a bearer token; using experimental HTTP API")
             self._active_mode = "http"
             return await http_call()
         try:
             result = await mcp_call()
             self._active_mode = "mcp"
             return result
-        except Exception:
+        except Exception as exc:
             if self.mode == "mcp" or not (self.token or self.cookie):
                 raise
-            logger.warning("HTB MCP unavailable; using experimental HTTP API", exc_info=True)
+            logger.warning("[HTB] MCP unavailable; falling back to experimental HTTP API: %s", exc)
             self._active_mode = "http"
             return await http_call()
 
@@ -622,30 +625,44 @@ class HTBClient:
         challenge = await self._challenge(challenge_name)
         raw = challenge.get("_raw", {})
         if raw.get("docker_online") or raw.get("machine_online"):
+            logger.info("[HTB] Instance already running for %s", challenge_name)
             return InstanceStatus(
                 status="running",
                 connection_info=_connection_info(raw),
                 message="HTB instance is already running",
             )
+        logger.info("[HTB] Starting instance for %s", challenge_name)
         started = await self._instance_action("start", challenge_name)
         if started.connection_info:
+            logger.info("[HTB] Instance ready for %s: %s", challenge_name, started.connection_info)
             return started
 
         # HTB acknowledges a container start before assigning host/port. Refresh
         # the CTF payload until its asynchronous launcher publishes the endpoint.
-        for _ in range(15):
-            await asyncio.sleep(1)
+        elapsed = 0.0
+        while elapsed < self.instance_ready_timeout_s:
+            await asyncio.sleep(self.instance_poll_interval_s)
+            elapsed += self.instance_poll_interval_s
             await self.fetch_all_challenges()
             refreshed = await self._challenge(challenge_name)
             raw = refreshed.get("_raw", {})
             connection = _connection_info(raw)
             if connection:
-                return InstanceStatus(
+                status = InstanceStatus(
                     status="running" if raw.get("docker_online") else started.status,
                     connection_info=connection,
                     message="HTB instance is ready",
                 )
-        return started
+                logger.info("[HTB] Instance ready for %s: %s", challenge_name, connection)
+                return status
+        logger.warning("[HTB] Instance startup timed out for %s", challenge_name)
+        return InstanceStatus(
+            status="timeout",
+            message=(
+                "HTB accepted the start request but did not publish a host/port "
+                f"within {self.instance_ready_timeout_s:g} seconds"
+            ),
+        )
 
     async def get_instance_status(self, challenge_name: str) -> InstanceStatus:
         return await self._instance_action("status", challenge_name)

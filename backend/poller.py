@@ -1,4 +1,4 @@
-"""Background CTFd poller — detects new and solved challenges every 5 seconds."""
+"""Background platform poller — detects new and solved challenges."""
 
 import asyncio
 import logging
@@ -17,10 +17,10 @@ class PollEvent:
 
 
 @dataclass
-class CTFdPoller:
-    """Polls CTFd every interval_s seconds, emits events for new/solved challenges."""
+class PlatformPoller:
+    """Polls a platform every interval, emitting events for new/solved challenges."""
 
-    ctfd: PlatformClient
+    platform_client: PlatformClient
     interval_s: float = 5.0
 
     _known_challenges: set[str] = field(default_factory=set)
@@ -33,20 +33,21 @@ class CTFdPoller:
         """Do initial poll (silent — no events) and start the background loop."""
         await self._seed()
         logger.info(
-            "Poller initialized: %d challenges, %d solved",
+            "[%s] Poller initialized: %d challenges, %d solved",
+            getattr(self.platform_client, "platform_name", "platform").upper(),
             len(self._known_challenges),
             len(self._known_solved),
         )
-        self._task = asyncio.create_task(self._loop(), name="ctfd-poller")
+        self._task = asyncio.create_task(self._loop(), name="platform-poller")
 
     async def _seed(self) -> None:
         """Initial fetch — just populate known state, no events."""
         try:
-            stubs = await self.ctfd.fetch_challenge_stubs()
+            stubs = await self.platform_client.fetch_challenge_stubs()
             self._known_challenges = {ch["name"] for ch in stubs}
-            self._known_solved = await self.ctfd.fetch_solved_names()
+            self._known_solved = await self.platform_client.fetch_solved_names()
         except Exception as e:
-            logger.warning("Initial poll error: %s", e)
+            logger.warning("[%s] Initial poll error: %s", getattr(self.platform_client, "platform_name", "platform").upper(), e)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -84,9 +85,9 @@ class CTFdPoller:
 
     async def _poll_once(self) -> None:
         try:
-            stubs = await self.ctfd.fetch_challenge_stubs()
+            stubs = await self.platform_client.fetch_challenge_stubs()
             current_names = {ch["name"] for ch in stubs}
-            current_solved = await self.ctfd.fetch_solved_names()
+            current_solved = await self.platform_client.fetch_solved_names()
 
             # Sanity check: if results look bogus compared to what we know, skip.
             if self._known_challenges and len(current_names) < len(self._known_challenges) // 2:
@@ -117,9 +118,16 @@ class CTFdPoller:
             self._known_solved = current_solved
 
         except Exception as e:
-            logger.warning(f"Poll error: {e}")
+            logger.warning("[%s] Poll error: %s", getattr(self.platform_client, "platform_name", "platform").upper(), e)
 
     async def _loop(self) -> None:
         while not self._stop.is_set():
             await asyncio.sleep(self.interval_s)
             await self._poll_once()
+
+
+class CTFdPoller(PlatformPoller):
+    """Backward-compatible wrapper for the historic CTFd-specific poller name."""
+
+    def __init__(self, ctfd: PlatformClient, interval_s: float = 5.0) -> None:
+        super().__init__(platform_client=ctfd, interval_s=interval_s)

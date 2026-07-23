@@ -114,7 +114,7 @@ async def run_claude_coordinator(
     msg_port: int = 0,
 ) -> dict[str, Any]:
     """Run the Claude Agent SDK coordinator with the shared event loop."""
-    ctfd, cost_tracker, deps = build_deps(
+    platform_client, cost_tracker, deps = build_deps(
         settings, model_specs, challenges_root, no_submit,
     )
     deps.msg_port = msg_port
@@ -174,4 +174,4 @@ async def run_claude_coordinator(
             if msg_count == 0:
                 logger.warning("Coordinator turn produced no messages!")
 
-        return await run_event_loop(deps, ctfd, cost_tracker, turn_fn)
+        return await run_event_loop(deps, platform_client, cost_tracker, turn_fn)

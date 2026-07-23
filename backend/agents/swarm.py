@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 
 from backend.agents.solver import Solver
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.message_bus import ChallengeMessageBus
 from backend.models import DEFAULT_MODELS, provider_from_spec
+from backend.platform import PlatformClient
 from backend.prompts import ChallengeMeta
 from backend.solver_base import (
     CANCELLED,
@@ -50,7 +50,7 @@ class ChallengeSwarm:
 
     challenge_dir: str
     meta: ChallengeMeta
-    ctfd: CTFdClient
+    platform_client: PlatformClient
     cost_tracker: CostTracker
     settings: Settings
     model_specs: list[str] = field(default_factory=lambda: list(DEFAULT_MODELS))
@@ -86,7 +86,7 @@ class ChallengeSwarm:
                 model_spec=model_spec,
                 challenge_dir=self.challenge_dir,
                 meta=self.meta,
-                ctfd=self.ctfd,
+                platform_client=self.platform_client,
                 cost_tracker=self.cost_tracker,
                 settings=self.settings,
                 cancel_event=self.cancel_event,
@@ -102,7 +102,7 @@ class ChallengeSwarm:
                 model_spec=model_spec,
                 challenge_dir=self.challenge_dir,
                 meta=self.meta,
-                ctfd=self.ctfd,
+                platform_client=self.platform_client,
                 cost_tracker=self.cost_tracker,
                 settings=self.settings,
                 cancel_event=self.cancel_event,
@@ -129,7 +129,7 @@ class ChallengeSwarm:
             model_spec=model_spec,
             challenge_dir=self.challenge_dir,
             meta=self.meta,
-            ctfd=self.ctfd,
+            platform_client=self.platform_client,
             cost_tracker=self.cost_tracker,
             settings=self.settings,
             cancel_event=self.cancel_event,
@@ -184,7 +184,9 @@ class ChallengeSwarm:
             self._submitted_flags.add(normalized)
 
             from backend.tools.core import do_submit_flag
-            display, is_confirmed = await do_submit_flag(self.ctfd, self.meta.name, flag)
+            display, is_confirmed = await do_submit_flag(
+                self.platform_client, self.meta.name, flag
+            )
             if is_confirmed:
                 self.confirmed_flag = normalized
             else:

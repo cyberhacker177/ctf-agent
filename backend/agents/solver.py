@@ -15,7 +15,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.deps import SolverDeps
 from backend.loop_detect import LOOP_WARNING_MESSAGE, LoopDetector
 from backend.models import (
@@ -26,6 +25,7 @@ from backend.models import (
     supports_vision,
 )
 from backend.output_types import FlagFound
+from backend.platform import PlatformClient
 from backend.prompts import ChallengeMeta, build_prompt, list_distfiles
 from backend.sandbox import DockerSandbox
 from backend.solver_base import CANCELLED, CORRECT_MARKERS, ERROR, FLAG_FOUND, GAVE_UP, SolverResult
@@ -111,7 +111,7 @@ class Solver:
         model_spec: str,
         challenge_dir: str,
         meta: ChallengeMeta,
-        ctfd: CTFdClient,
+        platform_client: PlatformClient,
         cost_tracker: CostTracker,
         settings: object,
         cancel_event: asyncio.Event | None = None,
@@ -122,7 +122,7 @@ class Solver:
         self.model_id = model_id_from_spec(model_spec)
         self.challenge_dir = challenge_dir
         self.meta = meta
-        self.ctfd = ctfd
+        self.platform_client = platform_client
         self.cost_tracker = cost_tracker
         self.settings = settings
         self.cancel_event = cancel_event or asyncio.Event()
@@ -136,7 +136,7 @@ class Solver:
         self.use_vision = supports_vision(model_spec)
         self.deps = SolverDeps(
             sandbox=self.sandbox,
-            ctfd=ctfd,
+            platform_client=platform_client,
             challenge_dir=challenge_dir,
             challenge_name=meta.name,
             workspace_dir="",
@@ -198,8 +198,6 @@ class Solver:
         assert self._agent is not None
 
         t0 = time.monotonic()
-        steps_before = self._step_count[0]
-
         try:
             from pydantic_ai.usage import UsageLimits
             result = await self._agent.run(
