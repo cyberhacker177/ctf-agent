@@ -53,6 +53,11 @@ FALLBACK_PRICING: dict[str, dict[str, float]] = {
         "cached_input": 0.05,
         "output": 2.00,
     },
+    "gemini-3.6-flash": {
+        "input": 1.50,
+        "cached_input": 0.15,
+        "output": 7.50,
+    },
     "gemini-3-flash-preview": {
         "input": 0.15,
         "cached_input": 0.02,

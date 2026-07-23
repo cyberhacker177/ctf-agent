@@ -29,8 +29,19 @@ def _setup_logging(verbose: bool = False) -> None:
 
 
 @click.command()
+@click.option("--platform", type=click.Choice(["ctfd", "htb"]), default=None, help="Challenge platform")
 @click.option("--ctfd-url", default=None, help="CTFd URL (overrides .env)")
 @click.option("--ctfd-token", default=None, help="CTFd API token (overrides .env)")
+@click.option("--htb-event-id", type=int, default=None, help="HTB CTF event ID (for example 1434)")
+@click.option("--htb-token", default=None, help="HTB bearer token")
+@click.option("--htb-cookie", default=None, help="HTB authenticated session cookie")
+@click.option("--htb-user", default=None, help="HTB username/email for HTTP login")
+@click.option("--htb-pass", default=None, help="HTB password for HTTP login")
+@click.option("--htb-login-path", default=None, help="HTB HTTP login path (overrides .env)")
+@click.option("--htb-login-url", default=None, help="HTB login URL (overrides .env)")
+@click.option("--htb-captcha-token", default=None, help="CAPTCHA token required by HTB login")
+@click.option("--htb-mode", type=click.Choice(["auto", "mcp", "http"]), default=None, help="HTB transport mode")
+@click.option("--challenge-policy-file", default=None, help="YAML file listing challenges unavailable for AI")
 @click.option("--image", default="ctf-sandbox", help="Docker sandbox image name")
 @click.option("--models", multiple=True, help="Model specs (default: all configured)")
 @click.option("--challenge", default=None, help="Solve a single challenge directory")
@@ -42,8 +53,19 @@ def _setup_logging(verbose: bool = False) -> None:
 @click.option("--msg-port", default=0, type=int, help="Operator message port (0 = auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
 def main(
+    platform: str | None,
     ctfd_url: str | None,
     ctfd_token: str | None,
+    htb_event_id: int | None,
+    htb_token: str | None,
+    htb_cookie: str | None,
+    htb_user: str | None,
+    htb_pass: str | None,
+    htb_login_path: str | None,
+    htb_login_url: str | None,
+    htb_captcha_token: str | None,
+    htb_mode: str | None,
+    challenge_policy_file: str | None,
     image: str,
     models: tuple[str, ...],
     challenge: str | None,
@@ -62,16 +84,38 @@ def main(
     _setup_logging(verbose)
 
     settings = Settings(sandbox_image=image)
+    if platform:
+        settings.platform = platform
     if ctfd_url:
         settings.ctfd_url = ctfd_url
     if ctfd_token:
         settings.ctfd_token = ctfd_token
+    if htb_event_id is not None:
+        settings.htb_event_id = htb_event_id
+    if htb_token:
+        settings.htb_token = htb_token
+    if htb_cookie:
+        settings.htb_cookie = htb_cookie
+    if htb_user:
+        settings.htb_user = htb_user
+    if htb_pass:
+        settings.htb_pass = htb_pass
+    if htb_login_path:
+        settings.htb_login_path = htb_login_path
+    if htb_login_url:
+        settings.htb_login_url = htb_login_url
+    if htb_captcha_token:
+        settings.htb_captcha_token = htb_captcha_token
+    if htb_mode:
+        settings.htb_mode = htb_mode
+    if challenge_policy_file:
+        settings.challenge_policy_file = challenge_policy_file
     settings.max_concurrent_challenges = max_challenges
 
     model_specs = list(models) if models else list(DEFAULT_MODELS)
 
     console.print("[bold]CTF Agent v2[/bold]")
-    console.print(f"  CTFd: {settings.ctfd_url}")
+    console.print(f"  Platform: {settings.platform}")
     console.print(f"  Models: {', '.join(model_specs)}")
     console.print(f"  Image: {settings.sandbox_image}")
     console.print(f"  Max challenges: {max_challenges}")
@@ -94,6 +138,7 @@ async def _run_single(
     from backend.agents.swarm import ChallengeSwarm
     from backend.cost_tracker import CostTracker
     from backend.ctfd import CTFdClient
+    from backend.htb import HTBClient
     from backend.prompts import ChallengeMeta
     from backend.sandbox import cleanup_orphan_containers, configure_semaphore
 
@@ -110,18 +155,23 @@ async def _run_single(
     meta = ChallengeMeta.from_yaml(meta_path)
     console.print(f"[bold]Challenge:[/bold] {meta.name} ({meta.category}, {meta.value} pts)")
 
-    ctfd = CTFdClient(
+    client = (HTBClient(event_id=settings.htb_event_id, token=settings.htb_token,
+                        cookie=settings.htb_cookie, username=settings.htb_user,
+                        password=settings.htb_pass, mode=settings.htb_mode,
+                        login_path=settings.htb_login_path, login_url=settings.htb_login_url,
+                        captcha_token=settings.htb_captcha_token)
+              if settings.platform == "htb" else CTFdClient(
         base_url=settings.ctfd_url,
         token=settings.ctfd_token,
         username=settings.ctfd_user,
         password=settings.ctfd_pass,
-    )
+    ))
     cost_tracker = CostTracker()
 
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_path),
         meta=meta,
-        ctfd=ctfd,
+        ctfd=client,
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=model_specs,
@@ -141,7 +191,7 @@ async def _run_single(
             console.print(f"  {agent_name}: {cost_tracker.format_usage(agent_name)}")
         console.print(f"  [bold]Total: ${cost_tracker.total_cost_usd:.2f}[/bold]")
     finally:
-        await ctfd.close()
+        await client.close()
 
 
 async def _run_coordinator(

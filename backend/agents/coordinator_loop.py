@@ -11,9 +11,10 @@ from typing import Any
 
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
+from backend.htb import HTBClient
 from backend.models import DEFAULT_MODELS
+from backend.platform import PlatformClient
 from backend.poller import CTFdPoller
 from backend.prompts import ChallengeMeta
 
@@ -30,20 +31,29 @@ def build_deps(
     no_submit: bool = False,
     challenge_dirs: dict[str, str] | None = None,
     challenge_metas: dict[str, ChallengeMeta] | None = None,
-) -> tuple[CTFdClient, CostTracker, CoordinatorDeps]:
-    """Create CTFd client, cost tracker, and coordinator deps."""
-    ctfd = CTFdClient(
-        base_url=settings.ctfd_url,
-        token=settings.ctfd_token,
-        username=settings.ctfd_user,
-        password=settings.ctfd_pass,
-    )
+) -> tuple[PlatformClient, CostTracker, CoordinatorDeps]:
+    """Create the configured platform client, cost tracker, and dependencies."""
+    if settings.platform == "htb":
+        if settings.htb_event_id is None:
+            raise ValueError("HTB requires --htb-event-id or HTB_EVENT_ID")
+        client: PlatformClient = HTBClient(
+            event_id=settings.htb_event_id, token=settings.htb_token,
+            cookie=settings.htb_cookie, username=settings.htb_user,
+            password=settings.htb_pass, mode=settings.htb_mode,
+            login_path=settings.htb_login_path,
+            login_url=settings.htb_login_url,
+            captcha_token=settings.htb_captcha_token,
+        )
+    else:
+        from backend.ctfd import CTFdClient
+        client = CTFdClient(base_url=settings.ctfd_url, token=settings.ctfd_token,
+                            username=settings.ctfd_user, password=settings.ctfd_pass)
     cost_tracker = CostTracker()
     specs = model_specs or list(DEFAULT_MODELS)
     Path(challenges_root).mkdir(parents=True, exist_ok=True)
 
     deps = CoordinatorDeps(
-        ctfd=ctfd,
+        ctfd=client,
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=specs,
@@ -63,12 +73,12 @@ def build_deps(
                 deps.challenge_dirs[meta.name] = str(d)
                 deps.challenge_metas[meta.name] = meta
 
-    return ctfd, cost_tracker, deps
+    return client, cost_tracker, deps
 
 
 async def run_event_loop(
     deps: CoordinatorDeps,
-    ctfd: CTFdClient,
+    ctfd: PlatformClient,
     cost_tracker: CostTracker,
     turn_fn: TurnFn,
     status_interval: int = 60,

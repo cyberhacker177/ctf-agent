@@ -25,3 +25,4 @@ uv.lock
 workspace/
 codex-schema-*/
 .claude/scheduled_tasks.lock
+.env

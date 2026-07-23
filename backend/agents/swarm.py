@@ -23,6 +23,7 @@ from backend.solver_base import (
     SolverProtocol,
     SolverResult,
 )
+from backend.tracing import write_solution
 
 if TYPE_CHECKING:
     from backend.config import Settings
@@ -229,9 +230,13 @@ class ChallengeSwarm:
             if result.status == FLAG_FOUND:
                 self.cancel_event.set()
                 self.winner = result
+                solution_path = write_solution(
+                    self.meta.name, model_spec, result.flag, result.findings_summary
+                )
                 logger.info(
                     f"[{self.meta.name}] Flag found by {model_spec}: {result.flag}"
                 )
+                logger.info("[%s] Wrote short solution: %s", self.meta.name, solution_path)
                 return result, solver
 
             if result.status == CANCELLED:

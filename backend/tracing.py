@@ -9,16 +9,48 @@ from pathlib import Path
 
 
 def _sanitize(s: str) -> str:
-    return s.replace("/", "_").replace(" ", "_")
+    return s.replace("/", "_").replace(" ", "_").lower()
+
+
+def challenge_log_dir(challenge_name: str, log_dir: str = "logs") -> Path:
+    """Return the stable directory containing one challenge's artifacts."""
+    path = Path(log_dir) / _sanitize(challenge_name)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_solution(
+    challenge_name: str,
+    model_spec: str,
+    flag: str | None,
+    summary: str,
+    log_dir: str = "logs",
+) -> Path:
+    """Write a concise winning-solver summary next to the challenge traces."""
+    path = challenge_log_dir(challenge_name, log_dir) / "solution.md"
+    method = summary.removeprefix("Flag found via ").strip()
+    if flag:
+        method = method.removesuffix(f": {flag}").strip()
+    text = (
+        f"# Solution: {challenge_name}\n\n"
+        f"- Winner: `{model_spec}`\n"
+        f"- Flag: `{flag or 'not recorded'}`\n\n"
+        "## Short solution\n\n"
+        f"{method or 'The winning solver did not provide a method summary.'}\n"
+    )
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 class SolverTracer:
     """Append-only JSONL event tracer. Flushes every write for tail -f streaming."""
 
     def __init__(self, challenge_name: str, model_id: str, log_dir: str = "logs") -> None:
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d-%H%M%S")
-        self.path = str(Path(log_dir) / f"trace-{_sanitize(challenge_name)}-{_sanitize(model_id)}-{ts}.jsonl")
+        self.path = str(
+            challenge_log_dir(challenge_name, log_dir)
+            / f"trace-{_sanitize(model_id)}-{ts}.jsonl"
+        )
         self._fh = open(self.path, "a")
         atexit.register(self._close)
 

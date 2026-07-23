@@ -67,7 +67,7 @@ docker build -f sandbox/Dockerfile.sandbox -t ctf-sandbox .
 cp .env.example .env
 # Edit .env with your API keys and CTFd token
 
-# Run against a CTFd instance
+# Run against a CTFd instance (the default)
 uv run ctf-solve \
   --ctfd-url https://ctf.example.com \
   --ctfd-token ctfd_your_token \
@@ -75,6 +75,39 @@ uv run ctf-solve \
   --max-challenges 10 \
   -v
 ```
+
+### Hack The Box CTF events
+
+HTB events use the same solver and `metadata.yml` format. Set an event ID such as
+1434 and provide an authenticated token or session cookie. `auto` tries the official
+HTB MCP service when available, then falls back to the experimental HTTP API; use
+`--htb-mode http` to force the fallback (the API paths may change).
+
+```bash
+uv run ctf-solve --platform htb --htb-event-id 1434 \
+  --htb-token "$HTB_TOKEN" --htb-mode auto --challenges-dir challenges
+```
+
+Equivalent settings are available as `PLATFORM`, `HTB_EVENT_ID`, `HTB_TOKEN`,
+`HTB_COOKIE`, `HTB_USER`, `HTB_PASS`, and `HTB_MODE` in `.env`. Username/password
+login is supported by the experimental HTTP transport; if HTB changes its login
+endpoint, configure `HTB_LOGIN_PATH` or pass an existing cookie instead.
+
+The default solver lineup is `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`,
+`gpt-5.6-luna`, and `gpt-5.6-terra` through Codex. Use `--models` to override it.
+
+### Excluding challenges from AI
+
+Use `challenge-policy.yml` to prevent the AI from working on selected unsolved
+challenges. Team-solved challenges are always skipped, regardless of the policy.
+
+```yaml
+unavailable_for_ai:
+  - Discord Challenge
+```
+
+All other unsolved challenges are delegated to AI. Set a different file with
+`CHALLENGE_POLICY_FILE` or `--challenge-policy-file`.
 
 ## Coordinator Backends
 

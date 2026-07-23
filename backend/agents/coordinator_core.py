@@ -7,23 +7,45 @@ import json
 import logging
 from pathlib import Path
 
+import yaml
+
 from backend.deps import CoordinatorDeps
+from backend.platform import InstanceStatus
 from backend.prompts import ChallengeMeta
 from backend.solver_base import FLAG_FOUND
 
 logger = logging.getLogger(__name__)
 
 
+def unavailable_for_ai(settings: object) -> set[str]:
+    """Return manually excluded challenge names from the optional policy file."""
+    policy_path = Path(getattr(settings, "challenge_policy_file", "challenge-policy.yml"))
+    if not policy_path.exists():
+        return set()
+    try:
+        data = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+        unavailable = data.get("unavailable_for_ai", [])
+        return {str(name) for name in unavailable}
+    except (OSError, yaml.YAMLError, TypeError) as exc:
+        logger.warning("Could not read challenge policy %s: %s", policy_path, exc)
+        return set()
+
+
 async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
     challenges = await deps.ctfd.fetch_all_challenges()
     solved = await deps.ctfd.fetch_solved_names()
+    unavailable = unavailable_for_ai(deps.settings)
     result = [
         {
             "name": ch.get("name", "?"),
             "category": ch.get("category", "?"),
             "value": ch.get("value", 0),
             "solves": ch.get("solves", 0),
-            "status": "SOLVED" if ch.get("name") in solved else "unsolved",
+            "status": (
+                "SOLVED" if ch.get("name") in solved
+                else "unavailable_for_ai" if ch.get("name") in unavailable
+                else "unsolved"
+            ),
             "description": (ch.get("description") or "")[:200],
         }
         for ch in challenges
@@ -48,6 +70,19 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
         del deps.swarms[name]
         deps.swarm_tasks.pop(name, None)
 
+    # Never allocate an AI swarm after the team has already solved it.
+    try:
+        if challenge_name in await deps.ctfd.fetch_solved_names():
+            if swarm := deps.swarms.get(challenge_name):
+                swarm.kill()
+            return f"Skipped {challenge_name}: it was already solved by your team."
+    except Exception as exc:
+        logger.debug("Could not verify solve status before spawning %s: %s", challenge_name, exc)
+
+    unavailable = unavailable_for_ai(deps.settings)
+    if challenge_name in unavailable:
+        return f"Skipped {challenge_name}: it is configured as unavailable for AI."
+
     active_count = len(deps.swarms)
     if active_count >= deps.max_concurrent_challenges:
         return f"At capacity ({active_count}/{deps.max_concurrent_challenges} challenges running). Wait for one to finish."
@@ -65,6 +100,34 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
         ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
         deps.challenge_dirs[challenge_name] = ch_dir
         deps.challenge_metas[challenge_name] = ChallengeMeta.from_yaml(Path(ch_dir) / "metadata.yml")
+
+    # HTB container challenges need a remote instance before solvers can connect.
+    # Other platforms can explicitly report that lifecycle operations are unsupported.
+    ch_data = next(
+        (ch for ch in await deps.ctfd.fetch_all_challenges() if ch.get("name") == challenge_name), None
+    )
+    if ch_data and ch_data.get("_instance_supported"):
+        try:
+            instance: InstanceStatus = await deps.ctfd.start_instance(challenge_name)
+            if instance.connection_info:
+                meta = deps.challenge_metas[challenge_name]
+                meta.connection_info = instance.connection_info
+                metadata_path = Path(deps.challenge_dirs[challenge_name]) / "metadata.yml"
+                metadata = yaml.safe_load(metadata_path.read_text()) or {}
+                metadata["connection_info"] = instance.connection_info
+                metadata_path.write_text(
+                    yaml.dump(metadata, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                    encoding="utf-8",
+                )
+            logger.info(
+                "HTB instance started for %s: %s",
+                challenge_name,
+                instance.connection_info or instance.status,
+            )
+        except NotImplementedError:
+            pass
+        except Exception as exc:
+            logger.warning("Could not start instance for %s: %s", challenge_name, exc)
 
     from backend.agents.swarm import ChallengeSwarm
 

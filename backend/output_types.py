@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class FlagFound(BaseModel):
     flag: str
-    method: str  # brief description of how
+    method: str  # concise one- or two-sentence description of how
 
 
 def solver_output_json_schema() -> dict:
@@ -19,7 +19,10 @@ def solver_output_json_schema() -> dict:
         "properties": {
             "type": {"type": "string", "enum": ["flag_found"]},
             "flag": {"type": "string"},
-            "method": {"type": "string"},
+            "method": {
+                "type": "string",
+                "description": "One or two concise sentences explaining how the flag was obtained.",
+            },
         },
         "required": ["type", "flag", "method"],
         "additionalProperties": False,

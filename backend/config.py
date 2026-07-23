@@ -6,11 +6,23 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    platform: str = "ctfd"
     # CTFd
     ctfd_url: str = "http://localhost:8000"
     ctfd_user: str = "admin"
     ctfd_pass: str = "admin"
     ctfd_token: str = ""
+
+    htb_event_id: int | None = None
+    htb_token: str = ""
+    htb_cookie: str = ""
+    htb_user: str = ""
+    htb_pass: str = ""
+    htb_mode: str = "auto"
+    htb_login_path: str = "/auth/login"
+    htb_login_url: str = "https://account.hackthebox.com/api/v1/auth/login"
+    htb_captcha_token: str = ""
+    challenge_policy_file: str = "challenge-policy.yml"
 
     # API Keys
     anthropic_api_key: str = ""
