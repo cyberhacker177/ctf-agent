@@ -18,7 +18,8 @@ A **coordinator** LLM manages the competition while **solver swarms** attack ind
 
 ```
                         +-----------------+
-                        |  CTFd Platform  |
+                        | PlatformClient  |
+                        |  CTFd or HTB    |
                         +--------+--------+
                                  |
                         +--------v--------+
@@ -36,11 +37,10 @@ A **coordinator** LLM manages the competition while **solver swarms** attack ind
      | Swarm:          | | Swarm:         | | Swarm:         |
      | challenge-1     | | challenge-2    | | challenge-N    |
      |                 | |                | |                |
-     |  Opus (med)     | |  Opus (med)    | |                |
-     |  Opus (max)     | |  Opus (max)    | |     ...        |
+     |  GPT-5.5        | |  GPT-5.5       | |                |
      |  GPT-5.4        | |  GPT-5.4       | |                |
      |  GPT-5.4-mini   | |  GPT-5.4-mini  | |                |
-     |  GPT-5.3-codex  | |  GPT-5.3-codex | |                |
+     |  GPT-5.6-terra  | |  GPT-5.6-terra | |     ...        |
      +--------+--------+ +--------+-------+ +----------------+
               |                    |
      +--------v--------+  +-------v--------+
@@ -65,10 +65,11 @@ docker build -f sandbox/Dockerfile.sandbox -t ctf-sandbox .
 
 # Configure credentials
 cp .env.example .env
-# Edit .env with your API keys and CTFd token
+# Edit .env with your API keys and platform credentials
 
-# Run against a CTFd instance (the default)
+# Run against a CTFd instance
 uv run ctf-solve \
+  --platform ctfd \
   --ctfd-url https://ctf.example.com \
   --ctfd-token ctfd_your_token \
   --challenges-dir challenges \
@@ -79,19 +80,42 @@ uv run ctf-solve \
 ### Hack The Box CTF events
 
 HTB events use the same solver and `metadata.yml` format. Set an event ID such as
-1434 and provide an authenticated token or session cookie. `auto` tries the official
-HTB MCP service when available, then falls back to the experimental HTTP API; use
-`--htb-mode http` to force the fallback (the API paths may change).
+1434 and provide an authenticated token or session cookie. HTB support covers
+challenge discovery, solved status, downloads, flags, and challenge instances when
+the event exposes them. A container-backed challenge is only handed to solvers after
+HTB publishes its usable host/port/URL; that endpoint is written to `metadata.yml`
+and included in every solver prompt.
 
 ```bash
-uv run ctf-solve --platform htb --htb-event-id 1434 \
-  --htb-token "$HTB_TOKEN" --htb-mode auto --challenges-dir challenges
+uv run ctf-solve --platform htb --htb-event-id 1434 --htb-token "$HTB_TOKEN" --htb-mode auto --challenges-dir challenges
 ```
 
-Equivalent settings are available as `PLATFORM`, `HTB_EVENT_ID`, `HTB_TOKEN`,
-`HTB_COOKIE`, `HTB_USER`, `HTB_PASS`, and `HTB_MODE` in `.env`. Username/password
-login is supported by the experimental HTTP transport; if HTB changes its login
-endpoint, configure `HTB_LOGIN_PATH` or pass an existing cookie instead.
+Authentication methods, in recommended order:
+
+- `HTB_TOKEN` / `--htb-token`: bearer token from an authenticated HTB CTF session.
+- `HTB_COOKIE` / `--htb-cookie`: a complete authenticated cookie header, useful when the browser flow is protected by CAPTCHA or Cloudflare.
+- `HTB_USER` + `HTB_PASS`: experimental login fallback only; it can require an HTB CAPTCHA token and may change without notice.
+
+Never commit credentials, cookies, or tokens. Equivalent settings are available as
+`PLATFORM`, `HTB_EVENT_ID`, `HTB_TOKEN`, `HTB_COOKIE`, `HTB_USER`, `HTB_PASS`, and
+`HTB_MODE` in `.env`.
+
+| Mode | Behavior |
+|---|---|
+| `auto` | Prefer official HTB MCP; fall back to the experimental HTTP API when MCP is unavailable. |
+| `mcp` | Require MCP; no HTTP fallback. |
+| `http` | Use the experimental authenticated HTB web API directly. |
+
+The HTTP API is configurable (`HTB_API_URL`, endpoint-path settings) because HTB
+does not publish it as a stable integration contract.
+
+### Platform architecture
+
+`PlatformClient` is the small shared interface used by the poller, coordinator, and
+solvers. It provides challenge discovery, pulling/downloading, solved-state checks,
+flag submission, and optional instance lifecycle operations. `CTFdClient` preserves
+the existing CTFd behavior; `HTBClient` implements the same operations through MCP
+or the HTTP fallback. Platform-specific client construction remains at the CLI edge.
 
 The default solver lineup is `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`,
 `gpt-5.6-luna`, and `gpt-5.6-terra` through Codex. Use `--models` to override it.
@@ -125,11 +149,12 @@ Default model lineup (configurable in `backend/models.py`):
 
 | Model | Provider | Notes |
 |-------|----------|-------|
-| Claude Opus 4.6 (medium) | Claude SDK | Balanced speed/quality |
-| Claude Opus 4.6 (max) | Claude SDK | Deep reasoning |
+| GPT-5.5 | Codex | Primary general-purpose solver |
 | GPT-5.4 | Codex | Best overall solver |
 | GPT-5.4-mini | Codex | Fast, good for easy challenges |
-| GPT-5.3-codex | Codex | Reasoning model (xhigh effort) |
+| GPT-5.6-luna | Codex | Complementary solver |
+| GPT-5.6-terra | Codex | Medium reasoning effort |
+| Gemini 3.6 Flash | Google | Fast API-backed solver |
 
 ## Sandbox Tooling
 
@@ -171,6 +196,24 @@ GEMINI_API_KEY=...
 ```
 
 All settings can also be passed as environment variables or CLI flags.
+
+## Example workflows
+
+```bash
+# Safely inspect one HTB challenge without submitting a flag.
+uv run ctf-solve --platform htb --htb-event-id 1434 --htb-token "$HTB_TOKEN" --htb-mode http --no-submit --max-challenges 1 -v
+
+# Run a CTFd event using its API token.
+uv run ctf-solve --platform ctfd --ctfd-url https://ctf.example.com --ctfd-token "$CTFD_TOKEN"
+```
+
+## Troubleshooting
+
+- **`0 challenges` or an HTML/JSON decoding error:** verify `HTB_EVENT_ID` and use a real expanded token (`--htb-token "$HTB_TOKEN"`, not a single-quoted literal `$HTB_TOKEN`). Try `--htb-mode http` if MCP is not available.
+- **Instance startup timeout:** HTB acknowledged the request but has not published a connection target yet. Retry after a moment; the agent deliberately does not launch solvers without the target.
+- **`401`/`403` from HTB:** renew the bearer token or authenticated CTF cookie. Browser session cookies and bearer tokens expire.
+- **Team solved a challenge:** the coordinator automatically skips it. Add an unsolved challenge to `unavailable_for_ai` in `challenge-policy.yml` when you want to reserve it for humans.
+- **Stopping cleanly:** press `Ctrl+C` once. The coordinator cancels swarms and stops its local Docker sandboxes; HTB remote instances are not stopped automatically unless explicitly requested by platform lifecycle code.
 
 ## Requirements
 
