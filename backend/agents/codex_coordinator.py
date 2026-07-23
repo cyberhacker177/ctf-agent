@@ -22,6 +22,7 @@ from backend.agents.coordinator_core import (
 from backend.agents.coordinator_loop import build_deps, run_event_loop
 from backend.config import Settings
 from backend.deps import CoordinatorDeps
+from backend.models import model_id_from_spec
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +351,8 @@ async def run_codex_coordinator(
     )
     deps.msg_port = msg_port
 
-    resolved_model = coordinator_model or "gpt-5.4"
+    # CLI model specs use provider/model; Codex app-server expects only model.
+    resolved_model = model_id_from_spec(coordinator_model or "gpt-5.4")
     coordinator = CodexCoordinator(deps, model=resolved_model)
     await coordinator.start()
 
