@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -113,4 +114,26 @@ async def test_http_start_instance_reports_timeout_without_connection_target():
     status = await client.start_instance("Instance")
     assert status.status == "timeout"
     assert status.connection_info == ""
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_http_download_accepts_binary_challenge_archive(tmp_path):
+    archive = b"PK\x03\x04\xad\xb7binary"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/challenges/7/download":
+            return httpx.Response(
+                200,
+                content=archive,
+                headers={"content-type": "application/zip", "content-disposition": 'attachment; filename="challenge.zip"'},
+            )
+        return httpx.Response(404)
+
+    client = HTBClient(event_id=1434, token="token", mode="http", api_url="https://mock")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock")
+    challenge_dir = await client.pull_challenge(
+        {"name": "Binary", "_htb_id": 7, "files": [], "description": ""}, str(tmp_path)
+    )
+    assert (Path(challenge_dir) / "distfiles" / "challenge.zip").read_bytes() == archive
     await client.close()

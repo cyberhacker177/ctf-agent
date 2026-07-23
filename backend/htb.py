@@ -485,7 +485,7 @@ class HTBClient:
         display = f'{labels[status]} — "{flag}" {verb}. {message}'.strip()
         return SubmitResult(status, message, display)
 
-    async def _download_url(self, challenge: dict[str, Any]) -> str:
+    async def _download_url(self, challenge: dict[str, Any]) -> str | dict[str, Any]:
         challenge_id = challenge["_htb_id"]
 
         async def mcp_call():
@@ -496,17 +496,29 @@ class HTBClient:
             )
 
         async def http_call():
-            data = await self._http_get(
-                self.download_path.format(
-                    event_id=self.event_id, challenge_id=challenge_id
-                )
+            path = self.download_path.format(
+                event_id=self.event_id, challenge_id=challenge_id
             )
-            return data
+            client = await self._ensure_http_client()
+            response = await client.get(path)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+            if "json" in content_type:
+                return _unwrap(response.json())
+            disposition = response.headers.get("content-disposition", "")
+            match = re.search(r"filename\\*?=(?:UTF-8''|[\"']?)([^\"';]+)", disposition)
+            filename = match.group(1) if match else ""
+            return {
+                "_download_content": response.content,
+                "_download_filename": Path(filename or "download").name,
+            }
 
         data = await self._with_fallback(mcp_call, http_call)
         if isinstance(data, str):
             return data
         if isinstance(data, dict):
+            if "_download_content" in data:
+                return data
             return str(_first(data, "url", "download_url", "downloadUrl", "link", default=""))
         return ""
 
@@ -521,14 +533,20 @@ class HTBClient:
         downloads = list(challenge.get("files") or [])
         if not downloads:
             try:
-                url = await self._download_url(challenge)
-                if url:
-                    downloads.append(url)
+                resource = await self._download_url(challenge)
+                if resource:
+                    downloads.append(resource)
             except (NotImplementedError, httpx.HTTPStatusError):
                 logger.info("No downloadable files for HTB challenge %s", name)
 
         client = await self._ensure_http_client()
         for index, item in enumerate(downloads, 1):
+            if isinstance(item, dict) and "_download_content" in item:
+                filename = Path(str(item.get("_download_filename") or f"download-{index}")).name
+                distfiles = challenge_dir / "distfiles"
+                distfiles.mkdir(exist_ok=True)
+                (distfiles / filename).write_bytes(item["_download_content"])
+                continue
             url = item
             if isinstance(item, dict):
                 url = _first(item, "url", "download_url", "downloadUrl", "link", default="")

@@ -193,6 +193,20 @@ class CodexCoordinator:
             logger.warning("Codex coordinator turn timed out")
 
         if self._turn_error:
+            if (
+                "not supported when using Codex with a ChatGPT account" in str(self._turn_error)
+                and self.model != "gpt-5.4"
+            ):
+                logger.warning(
+                    "Codex coordinator model %s is unavailable for this account; retrying with gpt-5.4",
+                    self.model,
+                )
+                await self.stop()
+                self.model = "gpt-5.4"
+                self._thread_id = None
+                await self.start()
+                await self.turn(message)
+                return
             logger.warning(f"Codex coordinator turn error: {self._turn_error}")
 
     async def stop(self) -> None:

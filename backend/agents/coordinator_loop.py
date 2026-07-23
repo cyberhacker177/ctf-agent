@@ -50,6 +50,12 @@ def build_deps(
                             username=settings.ctfd_user, password=settings.ctfd_pass)
     cost_tracker = CostTracker()
     specs = model_specs or list(DEFAULT_MODELS)
+    if not settings.gemini_api_key:
+        specs = [spec for spec in specs if not spec.startswith("google/")]
+        if any(spec.startswith("google/") for spec in (model_specs or DEFAULT_MODELS)):
+            logger.warning(
+                "[Models] Google model omitted: set GEMINI_API_KEY or GOOGLE_API_KEY to enable it"
+            )
     Path(challenges_root).mkdir(parents=True, exist_ok=True)
 
     deps = CoordinatorDeps(

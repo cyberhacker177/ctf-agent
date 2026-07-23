@@ -113,6 +113,11 @@ def main(
     settings.max_concurrent_challenges = max_challenges
 
     model_specs = list(models) if models else list(DEFAULT_MODELS)
+    if not settings.gemini_api_key and any(spec.startswith("google/") for spec in model_specs):
+        model_specs = [spec for spec in model_specs if not spec.startswith("google/")]
+        console.print(
+            "[yellow]Google models disabled: set GEMINI_API_KEY or GOOGLE_API_KEY to enable them.[/yellow]"
+        )
 
     console.print("[bold]CTF Agent v2[/bold]")
     console.print(f"  Platform: {settings.platform}")
