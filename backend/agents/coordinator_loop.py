@@ -116,7 +116,8 @@ async def run_event_loop(
         f"CTF is LIVE. {len(poller.known_challenges)} challenges, "
         f"{len(poller.known_solved)} solved.\n"
         f"Unsolved: {sorted(unsolved) if unsolved else 'NONE'}\n"
-        "Fetch challenges and spawn swarms for all unsolved."
+        f"You may run at most {deps.max_concurrent_challenges} active swarm(s). "
+        "Fetch challenges and select only enough unsolved challenges to fill available slots."
     )
 
     try:

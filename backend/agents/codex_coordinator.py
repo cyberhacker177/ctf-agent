@@ -45,7 +45,8 @@ CRITICAL RULES:
   is confirmed correct.
 - When a solver seems stuck, bump it with very specific technical guidance based on
   its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
-- Cost is not a concern. Keep all swarms running.
+- Never exceed the configured active-swarm limit. When it is full, monitor and
+  improve the active swarm instead of attempting more spawn_swarm calls.
 
 You will receive event messages. Respond with tool calls to manage the competition.
 """
@@ -166,7 +167,10 @@ class CodexCoordinator:
         resp = await self._rpc("thread/start", {
             "model": self.model,
             "personality": "pragmatic",
-            "baseInstructions": COORDINATOR_PROMPT,
+            "baseInstructions": (
+                f"{COORDINATOR_PROMPT}\n\n"
+                f"ACTIVE-SWARM LIMIT: {self.deps.max_concurrent_challenges}."
+            ),
             "cwd": ".",
             "approvalPolicy": "on-request",
             "sandbox": "read-only",

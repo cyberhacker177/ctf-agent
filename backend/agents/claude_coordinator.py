@@ -48,7 +48,8 @@ CRITICAL RULES:
   is confirmed correct.
 - When a solver seems stuck, bump it with very specific technical guidance based on
   its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
-- Cost is not a concern. Keep all swarms running.
+- Never exceed the configured active-swarm limit. When it is full, monitor and
+  improve the active swarm instead of attempting more spawn_swarm calls.
 
 You will receive event messages. Respond with tool calls to manage the competition.
 """
@@ -148,7 +149,10 @@ async def run_claude_coordinator(
 
     options = ClaudeAgentOptions(
         model=resolved_model,
-        system_prompt=COORDINATOR_PROMPT,
+        system_prompt=(
+            f"{COORDINATOR_PROMPT}\n\n"
+            f"ACTIVE-SWARM LIMIT: {deps.max_concurrent_challenges}."
+        ),
         env={"CLAUDECODE": ""},
         mcp_servers={"coordinator": mcp_server},
         allowed_tools=list(allowed),
